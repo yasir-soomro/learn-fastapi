@@ -1,16 +1,23 @@
 from fastapi import APIRouter, HTTPException
-from app.data.mongo import db
-from app.schemas.student import student_type
+from app.data.mongo import get_collection
+from app.schemas.student import Student
 
 router = APIRouter(
     prefix="/students",
     tags=["students"]
 )
 
+COLLECTION_NAME = "students"
+
+
+def normalize_name(name: str) -> str:
+    return name.strip().lower()
+
+
 @router.get("/")
 def get_students():
     try:
-        students_collection = db["students"]
+        students_collection = get_collection(COLLECTION_NAME)
         students = list(students_collection.find({}, {"_id": 0}))
         return {"students": students}
     except HTTPException:
@@ -20,15 +27,21 @@ def get_students():
 
 
 @router.post("/")
-def create_student(student: student_type):
+def create_student(student: Student):
     try:
-        students_collection = db["students"]
-
+        students_collection = get_collection(COLLECTION_NAME)
         data = student.model_dump()
-        data["name"] = data["name"].lower()   # normalize name
+        data["name"] = normalize_name(data["name"])
+
+        existing = students_collection.find_one(
+            {"name": data["name"]},
+            {"_id": 0},
+        )
+        if existing:
+            raise HTTPException(status_code=400, detail="Student already exists")
 
         students_collection.insert_one(data)
-        return {"message": "Student created successfully"}
+        return {"student": data}
     except HTTPException:
         raise
     except Exception as e:
@@ -38,10 +51,11 @@ def create_student(student: student_type):
 @router.get("/{name}")
 def get_student_by_name(name: str):
     try:
-        student = None
-        for s in db["students"].find({"name": name.lower()}, {"_id": 0}):
-            student = s
-            break
+        students_collection = get_collection(COLLECTION_NAME)
+        student = students_collection.find_one(
+            {"name": normalize_name(name)},
+            {"_id": 0},
+        )
 
         if not student:
             raise HTTPException(status_code=404, detail="Student not found")
@@ -56,8 +70,8 @@ def get_student_by_name(name: str):
 @router.delete("/{name}")
 def delete_student(name: str):
     try:
-        students_collection = db["students"]
-        result = students_collection.delete_one({"name": name.lower()})
+        students_collection = get_collection(COLLECTION_NAME)
+        result = students_collection.delete_one({"name": normalize_name(name)})
 
         if result.deleted_count == 0:
             raise HTTPException(status_code=404, detail="Student not found")
@@ -70,22 +84,21 @@ def delete_student(name: str):
 
 
 @router.put("/{name}")
-def update_student(name: str, student: student_type):
+def update_student(name: str, student: Student):
     try:
-        students_collection = db["students"]
-
+        students_collection = get_collection(COLLECTION_NAME)
         data = student.model_dump()
-        data["name"] = data["name"].lower()  # keep normalized
+        data["name"] = normalize_name(data["name"])
 
         result = students_collection.update_one(
-            {"name": name.lower()},
+            {"name": normalize_name(name)},
             {"$set": data}
         )
 
         if result.matched_count == 0:
             raise HTTPException(status_code=404, detail="Student not found")
 
-        return {"message": "Student updated successfully"}
+        return {"student": data}
     except HTTPException:
         raise
     except Exception as e:
